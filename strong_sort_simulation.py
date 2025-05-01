@@ -16,6 +16,7 @@ GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 PURPLE = (128, 0, 128)
+ORANGE = (255, 165, 0)
 
 # Set up the display
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -34,9 +35,10 @@ class Obstacle:
         pygame.draw.circle(screen, BLACK, (int(self.x), int(self.y)), self.radius, 1)
 
 class MovingObstacle(Obstacle):
-    def __init__(self, x, y, radius, speed=1.0):
+    def __init__(self, x, y, radius, speed=None):
         super().__init__(x, y, radius)
-        self.speed = speed
+        # Use random speed if none provided (between 0.5 and 2.5)
+        self.speed = speed if speed is not None else random.uniform(0.5, 2.5)
         self.direction = random.uniform(0, 2 * math.pi)  # Random direction in radians
         self.color = (255, 165, 0)  # Orange color for moving obstacles
         self.vx = math.cos(self.direction) * self.speed
@@ -101,6 +103,7 @@ def generate_obstacles(num_obstacles, vehicle, use_predefined=False, moving_rati
         for coords in PREDEFINED_OBSTACLES:
             x, y, radius, is_moving = coords
             if is_moving:
+                # Don't specify speed to use random speeds for moving obstacles
                 obstacles.append(MovingObstacle(x, y, radius))
             else:
                 obstacles.append(Obstacle(x, y, radius))
@@ -140,12 +143,13 @@ def generate_random_obstacles(num_obstacles, vehicle, min_distance, moving_ratio
             x = random.randint(20, WIDTH - 20)
             y = random.randint(20, HEIGHT - 20)
             radius = random.randint(8, 15)  # Random size between 8 and 15
-            speed = random.uniform(0.5, 2.0)  # Random speed between 0.5 and 2.0
+            # No need to specify speed here as MovingObstacle will generate random speeds
+            # This creates more variety in obstacle speeds
             
             # Check distance from vehicle
             distance = math.sqrt((x - vehicle.x)**2 + (y - vehicle.y)**2)
             if distance >= min_distance:
-                obstacles.append(MovingObstacle(x, y, radius, speed))
+                obstacles.append(MovingObstacle(x, y, radius))
                 break
     
     return obstacles
@@ -184,9 +188,69 @@ def draw_info_panel(screen, vehicle):
     screen.blit(goal_text, (20, 100))
     screen.blit(seeking_text, (20, 120))
 
+# Add a function to draw projected path based on current steering angle
+def draw_projected_path(vehicle, screen):
+    # Only draw if the vehicle is moving
+    if abs(vehicle.speed) < 0.1:
+        return
+        
+    # Calculate the steering angle based on yaw_rate and speed
+    if abs(vehicle.speed) > 0.1:  # Avoid division by zero
+        steering_angle = math.atan2(vehicle.yaw_rate * vehicle.wheelbase, vehicle.speed)
+    else:
+        steering_angle = 0.0
+        
+    # Clamp steering angle to max_steering_angle
+    steering_angle = max(-vehicle.max_steering_angle, min(steering_angle, vehicle.max_steering_angle))
+    
+    # If steering angle is very small, assume straight path
+    if abs(steering_angle) < 0.01:
+        # Draw straight path
+        path_length = 50  # Length of projected path
+        end_x = vehicle.x + math.cos(vehicle.yaw) * path_length
+        end_y = vehicle.y + math.sin(vehicle.yaw) * path_length
+        pygame.draw.line(screen, (100, 200, 100), (vehicle.x, vehicle.y), (end_x, end_y), 1)
+        return
+    
+    # Calculate turning radius based on bicycle model
+    # R = wheelbase / tan(steering_angle)
+    turning_radius = vehicle.wheelbase / math.tan(abs(steering_angle))
+    
+    # Calculate center of turning circle
+    # Center is perpendicular to current heading at distance R
+    turn_direction = -1 if steering_angle > 0 else 1  # -1 for left turn, 1 for right turn
+    center_x = vehicle.x - math.sin(vehicle.yaw) * turning_radius * turn_direction
+    center_y = vehicle.y + math.cos(vehicle.yaw) * turning_radius * turn_direction
+    
+    # Draw arc representing projected path
+    # Calculate start and end angles for the arc
+    start_angle = vehicle.yaw + (math.pi/2 * turn_direction)
+    # Normalize to [0, 2π]
+    start_angle = start_angle % (2 * math.pi)
+    
+    # Calculate how much of the circle to draw based on speed
+    arc_length = min(math.pi/2, vehicle.speed * 0.2)  # Limit to 90 degrees
+    end_angle = start_angle + arc_length * -turn_direction
+    
+    # Draw a series of points to approximate the arc
+    points = []
+    steps = 20
+    for i in range(steps + 1):
+        angle = start_angle + (end_angle - start_angle) * (i / steps)
+        point_x = center_x + turning_radius * math.cos(angle)
+        point_y = center_y + turning_radius * math.sin(angle)
+        points.append((point_x, point_y))
+    
+    # Draw the projected path
+    if len(points) > 1:
+        pygame.draw.lines(screen, (100, 200, 100), False, points, 1)
+
 def main():
     # Create StrongSORT vehicle in the center of the screen
     vehicle = StrongSORTVehicle(WIDTH // 2, HEIGHT // 2)
+    
+    # Add draw_projected_path method to the vehicle
+    vehicle.draw_projected_path = lambda screen: draw_projected_path(vehicle, screen)
     
     # Generate obstacles (increased to 25, using predefined coordinates)
     obstacles = generate_obstacles(25, vehicle, use_predefined=True, moving_ratio=0.4)
@@ -209,6 +273,7 @@ def main():
                     vehicle.set_goal(mouse_x, mouse_y)
                     vehicle.seeking_goal = True
             elif event.type == pygame.KEYDOWN:
+                # Handle key press events
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_SPACE:
@@ -216,6 +281,8 @@ def main():
                 elif event.key == pygame.K_r:
                     # Reset simulation
                     vehicle = StrongSORTVehicle(WIDTH // 2, HEIGHT // 2)
+                    # Make sure to reassign the draw_projected_path method to the new vehicle instance
+                    vehicle.draw_projected_path = lambda screen: draw_projected_path(vehicle, screen)
                     obstacles = generate_obstacles(25, vehicle, use_predefined=True, moving_ratio=0.4)
                     manual_control = False
                 elif event.key == pygame.K_UP:
@@ -239,6 +306,9 @@ def main():
                         # Calculate yaw_rate from steering angle using bicycle model
                         if abs(vehicle.speed) > 0.1:  # Avoid division by zero
                             vehicle.yaw_rate = vehicle.speed * math.tan(steering_angle) / vehicle.wheelbase
+                        else:
+                            # Set a small yaw rate even when stopped to allow turning in place
+                            vehicle.yaw_rate = 0.02
                 elif event.key == pygame.K_RIGHT:
                     if manual_control:
                         # Turn right (clockwise) in manual mode using front wheels
@@ -246,6 +316,9 @@ def main():
                         # Calculate yaw_rate from steering angle using bicycle model
                         if abs(vehicle.speed) > 0.1:  # Avoid division by zero
                             vehicle.yaw_rate = vehicle.speed * math.tan(steering_angle) / vehicle.wheelbase
+                        else:
+                            # Set a small yaw rate even when stopped to allow turning in place
+                            vehicle.yaw_rate = -0.02
                 elif event.key == pygame.K_m:
                     # Toggle between manual and autonomous control
                     manual_control = not manual_control
@@ -283,6 +356,12 @@ def main():
                 elif event.key == pygame.K_t:
                     # Toggle showing only moving obstacles
                     show_moving_only = not show_moving_only
+            elif event.type == pygame.KEYUP:
+                # Handle key release events
+                if event.key == pygame.K_LEFT or event.key == pygame.K_RIGHT:
+                    if manual_control:
+                        # Reset steering when turning keys are released
+                        vehicle.yaw_rate = 0.0
         
         if paused:
             # If paused, just render the current state
@@ -317,8 +396,199 @@ def main():
         for tracked_obstacle in vehicle.tracked_obstacles:
             tracked_obstacle.draw(screen)
         
-        # Draw the vehicle
-        vehicle.draw(screen)
+        # Draw the vehicle with enhanced visualization
+        # First draw the path history
+        if len(vehicle.path_history) > 1:
+            pygame.draw.lines(screen, (100, 100, 255), False, vehicle.path_history, 2)
+            
+        # Draw the vehicle body
+        cos_yaw = math.cos(vehicle.yaw)
+        sin_yaw = math.sin(vehicle.yaw)
+        
+        # Calculate the four corners of the vehicle
+        points = [
+            (vehicle.x + cos_yaw * vehicle.width/2 - sin_yaw * vehicle.height/2,
+             vehicle.y + sin_yaw * vehicle.width/2 + cos_yaw * vehicle.height/2),
+            (vehicle.x + cos_yaw * vehicle.width/2 + sin_yaw * vehicle.height/2,
+             vehicle.y + sin_yaw * vehicle.width/2 - cos_yaw * vehicle.height/2),
+            (vehicle.x - cos_yaw * vehicle.width/2 + sin_yaw * vehicle.height/2,
+             vehicle.y - sin_yaw * vehicle.width/2 - cos_yaw * vehicle.height/2),
+            (vehicle.x - cos_yaw * vehicle.width/2 - sin_yaw * vehicle.height/2,
+             vehicle.y - sin_yaw * vehicle.width/2 + cos_yaw * vehicle.height/2)
+        ]
+        
+        # Draw the vehicle body
+        pygame.draw.polygon(screen, BLUE, points)
+        
+        # Draw front wheels with steering angle
+        # Calculate the steering angle based on yaw_rate and speed
+        if abs(vehicle.speed) > 0.1:  # Avoid division by zero
+            steering_angle = math.atan2(vehicle.yaw_rate * vehicle.wheelbase, vehicle.speed)
+        else:
+            steering_angle = 0.0
+            
+        # Clamp steering angle to max_steering_angle
+        steering_angle = max(-vehicle.max_steering_angle, min(steering_angle, vehicle.max_steering_angle))
+        
+        # Calculate positions of front wheels
+        # Front axle center position
+        front_axle_x = vehicle.x + cos_yaw * vehicle.wheelbase/2
+        front_axle_y = vehicle.y + sin_yaw * vehicle.wheelbase/2
+        
+        # Rear axle center position
+        rear_axle_x = vehicle.x - cos_yaw * vehicle.wheelbase/2
+        rear_axle_y = vehicle.y - sin_yaw * vehicle.wheelbase/2
+        
+        # Wheel dimensions
+        wheel_width = 8
+        wheel_height = 4
+        
+        # Front wheel positions
+        left_front_wheel_x = front_axle_x - sin_yaw * vehicle.height/2
+        left_front_wheel_y = front_axle_y + cos_yaw * vehicle.height/2
+        right_front_wheel_x = front_axle_x + sin_yaw * vehicle.height/2
+        right_front_wheel_y = front_axle_y - cos_yaw * vehicle.height/2
+        
+        # Rear wheel positions
+        left_rear_wheel_x = rear_axle_x - sin_yaw * vehicle.height/2
+        left_rear_wheel_y = rear_axle_y + cos_yaw * vehicle.height/2
+        right_rear_wheel_x = rear_axle_x + sin_yaw * vehicle.height/2
+        right_rear_wheel_y = rear_axle_y - cos_yaw * vehicle.height/2
+        
+        # Calculate front wheel orientation (yaw + steering angle)
+        wheel_yaw = vehicle.yaw + steering_angle
+        wheel_cos = math.cos(wheel_yaw)
+        wheel_sin = math.sin(wheel_yaw)
+        
+        # Draw left front wheel (with steering)
+        left_front_wheel_points = [
+            (left_front_wheel_x + wheel_cos * wheel_width/2 - wheel_sin * wheel_height/2,
+             left_front_wheel_y + wheel_sin * wheel_width/2 + wheel_cos * wheel_height/2),
+            (left_front_wheel_x + wheel_cos * wheel_width/2 + wheel_sin * wheel_height/2,
+             left_front_wheel_y + wheel_sin * wheel_width/2 - wheel_cos * wheel_height/2),
+            (left_front_wheel_x - wheel_cos * wheel_width/2 + wheel_sin * wheel_height/2,
+             left_front_wheel_y - wheel_sin * wheel_width/2 - wheel_cos * wheel_height/2),
+            (left_front_wheel_x - wheel_cos * wheel_width/2 - wheel_sin * wheel_height/2,
+             left_front_wheel_y - wheel_sin * wheel_width/2 + wheel_cos * wheel_height/2)
+        ]
+        pygame.draw.polygon(screen, BLACK, left_front_wheel_points)
+        
+        # Draw right front wheel (with steering)
+        right_front_wheel_points = [
+            (right_front_wheel_x + wheel_cos * wheel_width/2 - wheel_sin * wheel_height/2,
+             right_front_wheel_y + wheel_sin * wheel_width/2 + wheel_cos * wheel_height/2),
+            (right_front_wheel_x + wheel_cos * wheel_width/2 + wheel_sin * wheel_height/2,
+             right_front_wheel_y + wheel_sin * wheel_width/2 - wheel_cos * wheel_height/2),
+            (right_front_wheel_x - wheel_cos * wheel_width/2 + wheel_sin * wheel_height/2,
+             right_front_wheel_y - wheel_sin * wheel_width/2 - wheel_cos * wheel_height/2),
+            (right_front_wheel_x - wheel_cos * wheel_width/2 - wheel_sin * wheel_height/2,
+             right_front_wheel_y - wheel_sin * wheel_width/2 + wheel_cos * wheel_height/2)
+        ]
+        pygame.draw.polygon(screen, BLACK, right_front_wheel_points)
+        
+        # Draw left rear wheel (no steering)
+        left_rear_wheel_points = [
+            (left_rear_wheel_x + cos_yaw * wheel_width/2 - sin_yaw * wheel_height/2,
+             left_rear_wheel_y + sin_yaw * wheel_width/2 + cos_yaw * wheel_height/2),
+            (left_rear_wheel_x + cos_yaw * wheel_width/2 + sin_yaw * wheel_height/2,
+             left_rear_wheel_y + sin_yaw * wheel_width/2 - cos_yaw * wheel_height/2),
+            (left_rear_wheel_x - cos_yaw * wheel_width/2 + sin_yaw * wheel_height/2,
+             left_rear_wheel_y - sin_yaw * wheel_width/2 - cos_yaw * wheel_height/2),
+            (left_rear_wheel_x - cos_yaw * wheel_width/2 - sin_yaw * wheel_height/2,
+             left_rear_wheel_y - sin_yaw * wheel_width/2 + cos_yaw * wheel_height/2)
+        ]
+        pygame.draw.polygon(screen, BLACK, left_rear_wheel_points)
+        
+        # Draw right rear wheel (no steering)
+        right_rear_wheel_points = [
+            (right_rear_wheel_x + cos_yaw * wheel_width/2 - sin_yaw * wheel_height/2,
+             right_rear_wheel_y + sin_yaw * wheel_width/2 + cos_yaw * wheel_height/2),
+            (right_rear_wheel_x + cos_yaw * wheel_width/2 + sin_yaw * wheel_height/2,
+             right_rear_wheel_y + sin_yaw * wheel_width/2 - cos_yaw * wheel_height/2),
+            (right_rear_wheel_x - cos_yaw * wheel_width/2 + sin_yaw * wheel_height/2,
+             right_rear_wheel_y - sin_yaw * wheel_width/2 - cos_yaw * wheel_height/2),
+            (right_rear_wheel_x - cos_yaw * wheel_width/2 - sin_yaw * wheel_height/2,
+             right_rear_wheel_y - sin_yaw * wheel_width/2 + cos_yaw * wheel_height/2)
+        ]
+        pygame.draw.polygon(screen, BLACK, right_rear_wheel_points)
+        
+        # Draw sensors
+        # Calculate sensor points based on vehicle orientation
+        # Left side of vehicle
+        left_point = (vehicle.x - sin_yaw * vehicle.height/2, 
+                     vehicle.y + cos_yaw * vehicle.height/2)
+        # Right side of vehicle
+        right_point = (vehicle.x + sin_yaw * vehicle.height/2, 
+                      vehicle.y - cos_yaw * vehicle.height/2)
+        # Extend sensors forward
+        left_end = (left_point[0] + cos_yaw * vehicle.sensor_range,
+                   left_point[1] + sin_yaw * vehicle.sensor_range)
+        right_end = (right_point[0] + cos_yaw * vehicle.sensor_range,
+                    right_point[1] + sin_yaw * vehicle.sensor_range)
+        
+        # Center sensor
+        center_point = (vehicle.x, vehicle.y)
+        center_end = (vehicle.x + cos_yaw * vehicle.sensor_range * 1.2,
+                     vehicle.y + sin_yaw * vehicle.sensor_range * 1.2)
+        
+        # Draw the width-based sensors
+        pygame.draw.line(screen, YELLOW, left_point, left_end, 1)
+        pygame.draw.line(screen, YELLOW, right_point, right_end, 1)
+        pygame.draw.line(screen, YELLOW, left_end, right_end, 1)
+        
+        # Draw center sensor
+        pygame.draw.line(screen, YELLOW, center_point, center_end, 1)
+        
+        # Draw angled sensors
+        # Function to get angled sensor endpoint
+        def get_angled_sensor(angle_offset, range_multiplier=1.0):
+            angle = vehicle.yaw + math.radians(angle_offset)
+            sensor_range = vehicle.sensor_range * range_multiplier
+            sensor_x = vehicle.x + math.cos(angle) * sensor_range
+            sensor_y = vehicle.y + math.sin(angle) * sensor_range
+            return (sensor_x, sensor_y)
+        
+        # Get all angled sensors
+        left_sensor = get_angled_sensor(-45)
+        right_sensor = get_angled_sensor(45)
+        left_sensor_30 = get_angled_sensor(-30)
+        right_sensor_30 = get_angled_sensor(30)
+        left_sensor_15 = get_angled_sensor(-15)
+        right_sensor_15 = get_angled_sensor(15)
+        
+        # Get short-range diagonal sensors
+        front_left_sensor = get_angled_sensor(-20, 0.6)
+        front_right_sensor = get_angled_sensor(20, 0.6)
+        
+        # Draw all angled sensors
+        pygame.draw.line(screen, YELLOW, center_point, left_sensor, 1)
+        pygame.draw.line(screen, YELLOW, center_point, right_sensor, 1)
+        pygame.draw.line(screen, YELLOW, center_point, left_sensor_30, 1)
+        pygame.draw.line(screen, YELLOW, center_point, right_sensor_30, 1)
+        pygame.draw.line(screen, YELLOW, center_point, left_sensor_15, 1)
+        pygame.draw.line(screen, YELLOW, center_point, right_sensor_15, 1)
+        
+        # Draw short-range sensors with a different color
+        pygame.draw.line(screen, ORANGE, center_point, front_left_sensor, 1)
+        pygame.draw.line(screen, ORANGE, center_point, front_right_sensor, 1)
+        
+        # Draw vehicle collision radius for debugging
+        vehicle_radius = max(vehicle.width, vehicle.height) / 2
+        pygame.draw.circle(screen, (100, 100, 100), (int(vehicle.x), int(vehicle.y)), int(vehicle_radius), 1)
+        
+        # Draw extended collision radius (safety margin)
+        safety_radius = vehicle_radius + 8  # Same as the safety margin in detect_obstacles
+        pygame.draw.circle(screen, (50, 50, 50), (int(vehicle.x), int(vehicle.y)), int(safety_radius), 1)
+        
+        # Draw projected path based on current steering angle
+        vehicle.draw_projected_path(screen)
+        
+        # Draw goal if set
+        if vehicle.goal:
+            goal_x, goal_y = vehicle.goal
+            pygame.draw.circle(screen, GREEN, (int(goal_x), int(goal_y)), 5)
+            # Draw line from vehicle to goal
+            pygame.draw.line(screen, (50, 200, 50), (vehicle.x, vehicle.y), (goal_x, goal_y), 1)
         
         # Draw information panel
         draw_info_panel(screen, vehicle)

@@ -2,6 +2,7 @@ import pygame
 import sys
 import random
 import math
+from enhanced_vehicle_navigation import EnhancedVehicleNavigation
 
 # Initialize pygame
 pygame.init()
@@ -19,6 +20,9 @@ YELLOW = (255, 255, 0)
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Autonomous Vehicle Obstacle Avoidance Simulation")
 clock = pygame.time.Clock()
+
+# Initialize enhanced navigation system
+navigation_system = EnhancedVehicleNavigation(WIDTH, HEIGHT, grid_size=20)
 
 class Vehicle:
     def __init__(self, x, y, width=40, height=20):
@@ -842,8 +846,8 @@ class Obstacle:
 class MovingObstacle(Obstacle):
     def __init__(self, x, y, radius=10, speed=None):
         super().__init__(x, y, radius)
-        # Set velocity attributes for movement
-        self.speed = speed if speed is not None else random.uniform(0.5, 1.5)
+        # Set velocity attributes for movement with wider range of random speeds
+        self.speed = speed if speed is not None else random.uniform(0.5, 3.0)
         angle = random.uniform(0, 2 * math.pi)
         self.vx = self.speed * math.cos(angle)
         self.vy = self.speed * math.sin(angle)
@@ -919,6 +923,7 @@ def generate_obstacles(num_obstacles, vehicle, use_predefined=False, moving_rati
         for coords in PREDEFINED_OBSTACLES:
             x, y, radius, is_moving = coords
             if is_moving:
+                # Don't specify speed to use random speeds for moving obstacles
                 obstacles.append(MovingObstacle(x, y, radius))
             else:
                 obstacles.append(Obstacle(x, y, radius))
@@ -958,12 +963,12 @@ def generate_random_obstacles(num_obstacles, vehicle, min_distance, moving_ratio
             x = random.randint(20, WIDTH - 20)
             y = random.randint(20, HEIGHT - 20)
             radius = random.randint(8, 15)  # Random size between 8 and 15
-            speed = random.uniform(0.5, 2.0)  # Random speed between 0.5 and 2.0
+            # Let the MovingObstacle class assign random speeds for more variety
             
             # Check distance from vehicle
             distance = math.sqrt((x - vehicle.x)**2 + (y - vehicle.y)**2)
             if distance >= min_distance:
-                obstacles.append(MovingObstacle(x, y, radius, speed))
+                obstacles.append(MovingObstacle(x, y, radius))
                 break
     
     return obstacles
@@ -1009,12 +1014,20 @@ def main():
     # Generate obstacles (increased to 25, using predefined coordinates)
     obstacles = generate_obstacles(25, vehicle, use_predefined=True, moving_ratio=0.4)
     
+    # Set initial goal for A* pathfinding
+    initial_goal_x, initial_goal_y = WIDTH - 100, HEIGHT - 100
+    vehicle.set_goal(initial_goal_x, initial_goal_y)
+    
+    # Initialize path with A* pathfinding
+    navigation_system.find_path(vehicle.x, vehicle.y, initial_goal_x, initial_goal_y)
+    
     # Main game loop
     running = True
     paused = False
     manual_control = False  # Flag to toggle between autonomous and manual control
     goal_mode = True  # Flag to indicate if goal-seeking is enabled
     show_moving_only = False  # Flag to toggle showing only moving obstacles
+    use_enhanced_navigation = False  # Flag to toggle between enhanced and basic navigation
     
     while running:
         for event in pygame.event.get():
@@ -1025,6 +1038,10 @@ def main():
                     # Set goal at mouse click position
                     mouse_x, mouse_y = pygame.mouse.get_pos()
                     vehicle.set_goal(mouse_x, mouse_y)
+                    
+                    # Calculate new path with A* if enhanced navigation is enabled
+                    if use_enhanced_navigation:
+                        navigation_system.find_path(vehicle.x, vehicle.y, mouse_x, mouse_y)
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
@@ -1097,6 +1114,9 @@ def main():
                                     break
                             if valid_position:
                                 vehicle.set_goal(goal_x, goal_y)
+                                # Calculate new path with A* if enhanced navigation is enabled
+                                if use_enhanced_navigation:
+                                    navigation_system.find_path(vehicle.x, vehicle.y, goal_x, goal_y)
                                 break
                 elif event.key == pygame.K_o:
                     # Add a new obstacle at a random position
@@ -1115,6 +1135,13 @@ def main():
                     # Toggle showing only moving obstacles
                     show_moving_only = not show_moving_only
                     print(f"Showing {'only moving' if show_moving_only else 'all'} obstacles")
+                elif event.key == pygame.K_e:
+                    # Toggle enhanced navigation
+                    use_enhanced_navigation = not use_enhanced_navigation
+                    print(f"Enhanced navigation: {'ON' if use_enhanced_navigation else 'OFF'}")
+                    if use_enhanced_navigation and vehicle.goal:
+                        # Recalculate path with A*
+                        navigation_system.find_path(vehicle.x, vehicle.y, vehicle.goal[0], vehicle.goal[1])
         
         if not paused:
             # Detect obstacles in autonomous mode
@@ -1122,6 +1149,11 @@ def main():
                 # Only detect obstacles that are visible based on show_moving_only flag
                 visible_obstacles = [o for o in obstacles if not show_moving_only or isinstance(o, MovingObstacle)]
                 vehicle.detect_obstacles(visible_obstacles)
+                
+                # Use enhanced navigation if enabled
+                if use_enhanced_navigation and vehicle.goal and goal_mode:
+                    # Update navigation system with current obstacles and vehicle state
+                    navigation_system.update_vehicle_control(vehicle, vehicle.goal[0], vehicle.goal[1], visible_obstacles)
             
             # Move vehicle
             vehicle.move(obstacles)
@@ -1137,6 +1169,10 @@ def main():
         for obstacle in obstacles:
             if not show_moving_only or isinstance(obstacle, MovingObstacle):
                 obstacle.draw(screen)
+        
+        # Draw navigation system elements if enhanced navigation is enabled
+        if use_enhanced_navigation:
+            navigation_system.draw(screen)
         
         # Draw vehicle
         vehicle.draw(screen)
@@ -1159,6 +1195,7 @@ def main():
             "O - Add obstacle",
             "P - Toggle predefined/random",
             "T - Toggle show all/moving obstacles",
+            "E - Toggle enhanced navigation",
             "ESC - Quit"
         ]
         

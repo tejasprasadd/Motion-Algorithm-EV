@@ -531,6 +531,56 @@ class StrongSORTVehicle:
         # Apply the turn rate
         self.yaw_rate = turn_rate
         
+    def line_circle_intersection(self, line_start, line_end, circle_center, circle_radius):
+        # Check if a line segment intersects with a circle
+        # Based on the algorithm from: https://stackoverflow.com/a/1084899
+        
+        # Vector from line start to circle center
+        dx = circle_center[0] - line_start[0]
+        dy = circle_center[1] - line_start[1]
+        
+        # Vector from line start to line end
+        line_dx = line_end[0] - line_start[0]
+        line_dy = line_end[1] - line_start[1]
+        
+        # Length of line squared
+        line_length_sq = line_dx**2 + line_dy**2
+        
+        # If line has zero length, check if point is inside circle
+        if line_length_sq == 0:
+            return math.sqrt(dx**2 + dy**2) <= circle_radius
+        
+        # Calculate projection of circle center onto line
+        t = max(0, min(1, (dx * line_dx + dy * line_dy) / line_length_sq))
+        
+        # Calculate closest point on line to circle center
+        closest_x = line_start[0] + t * line_dx
+        closest_y = line_start[1] + t * line_dy
+        
+        # Check if closest point is within circle radius
+        closest_distance_sq = (closest_x - circle_center[0])**2 + (closest_y - circle_center[1])**2
+        return closest_distance_sq <= circle_radius**2
+    
+    def point_in_polygon(self, point, polygon):
+        # Check if a point is inside a polygon using ray casting algorithm
+        x, y = point
+        n = len(polygon)
+        inside = False
+        
+        p1x, p1y = polygon[0]
+        for i in range(1, n + 1):
+            p2x, p2y = polygon[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        
+        return inside
+        
     def set_goal(self, x, y):
         """Set a new goal position"""
         self.goal = (x, y)
@@ -599,6 +649,13 @@ class StrongSORTVehicle:
                 self.goal_reached = True
                 print(f"Goal reached at ({goal_x}, {goal_y})")
                 return
+            else:
+                # Adjust direction to face goal
+                self.face_goal()
+                
+                # Slow down as we approach the goal
+                if distance_to_goal < self.goal_radius * 3:
+                    self.speed = max(1.0, self.speed * 0.95)  # Gradually reduce speed
         
         # Calculate steering angle based on yaw_rate and vehicle kinematics
         if abs(self.speed) > 0.1:  # Avoid division by zero
