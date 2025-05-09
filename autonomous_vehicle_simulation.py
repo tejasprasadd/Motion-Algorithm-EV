@@ -24,7 +24,6 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Autonomous Vehicle Obstacle Avoidance Simulation")
 clock = pygame.time.Clock()
 
-# No enhanced navigation system - using basic obstacle avoidance
 
 class Vehicle:
     def __init__(self, x, y, width=40, height=20):
@@ -41,9 +40,9 @@ class Vehicle:
         self.max_history = 100
         self.stopped = False
         self.stop_counter = 0
-        self.stop_duration = 30  # frames to stay stopped when obstacle detected
+        self.stop_duration = 30  # frames to stay stopped when obstacle detected3
         self.goal = None  # Target position (x, y)
-        self.goal_radius = 20  # Distance to consider goal reached
+        self.goal_radius = 10# Distance to consider goal reached
         self.seeking_goal = False  # Whether vehicle is actively seeking a goal
         self.max_turn_rate = math.pi / 36  # Maximum turning rate in radians per frame
         self.wheelbase = 30  # Distance between front and rear axles
