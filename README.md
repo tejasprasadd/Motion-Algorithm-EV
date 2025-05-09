@@ -27,7 +27,7 @@ This project simulates an unmanned autonomous electric vehicle's motion algorith
    ```
 3. Run the simulation:
    ```
-   python autonomous_vehicle_simulation.py
+   python virtual_force_field.py
    ```
 
 ## Controls
